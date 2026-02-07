@@ -19,6 +19,11 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(passport.initialize());
 
+// Root health check
+app.get('/', (req, res) => {
+  res.json({ message: 'API is running' });
+});
+
 // Passport config
 require('./config/passport')();
 
