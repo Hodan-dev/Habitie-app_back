@@ -13,12 +13,18 @@ exports.generateToken = generateToken;
 // Waa halka ay user-ka cusub u isdiiwaan gareeyo
 exports.register = async (req, res, next) => {
   try {
-    const { name, email, password, dailyCalorieGoal } = req.body;
+    const { name, email, password, dailyCalorieGoal, age, gender, heightCm, weightKg } = req.body;
 
     // Hubi in dhammaan fields-ka ay jiraan
     if (!name || !email || !password) {
       return res.status(400).json({
         message: 'Fadlan buuxi dhammaan fields-ka'
+      });
+    }
+
+    if (age == null || gender == null || heightCm == null || weightKg == null) {
+      return res.status(400).json({
+        message: 'Fadlan buuxi age, gender, height, iyo weight'
       });
     }
 
@@ -31,12 +37,20 @@ exports.register = async (req, res, next) => {
     }
 
     // Samee user cusub
-    const user = await User.create({
+    const userData = {
       name,
       email,
       password,
-      dailyCalorieGoal: dailyCalorieGoal || 2000
-    });
+      age,
+      gender,
+      heightCm,
+      weightKg
+    };
+    if (dailyCalorieGoal != null) {
+      userData.dailyCalorieGoal = dailyCalorieGoal;
+    }
+
+    const user = await User.create(userData);
 
     // Soo celi user-ka iyo token-ka
     res.status(201).json({
@@ -47,7 +61,11 @@ exports.register = async (req, res, next) => {
           name: user.name,
           email: user.email,
           role: user.role,
-          dailyCalorieGoal: user.dailyCalorieGoal
+          dailyCalorieGoal: user.dailyCalorieGoal,
+          age: user.age,
+          gender: user.gender,
+          heightCm: user.heightCm,
+          weightKg: user.weightKg
         },
         token: generateToken(user._id)
       }
@@ -91,14 +109,18 @@ exports.login = async (req, res, next) => {
         data: {
           user: {
             id: adminUser._id,
-            name: adminUser.name,
-            email: adminUser.email,
-            role: adminUser.role,
-            dailyCalorieGoal: adminUser.dailyCalorieGoal
-          },
-          token: generateToken(adminUser._id)
-        }
-      });
+          name: adminUser.name,
+          email: adminUser.email,
+          role: adminUser.role,
+          dailyCalorieGoal: adminUser.dailyCalorieGoal,
+          age: adminUser.age,
+          gender: adminUser.gender,
+          heightCm: adminUser.heightCm,
+          weightKg: adminUser.weightKg
+        },
+        token: generateToken(adminUser._id)
+      }
+    });
     }
 
     const user = await User.findOne({ email }).select('+password');
@@ -127,7 +149,11 @@ exports.login = async (req, res, next) => {
           name: user.name,
           email: user.email,
           role: user.role,
-          dailyCalorieGoal: user.dailyCalorieGoal
+          dailyCalorieGoal: user.dailyCalorieGoal,
+          age: user.age,
+          gender: user.gender,
+          heightCm: user.heightCm,
+          weightKg: user.weightKg
         },
         token: generateToken(user._id)
       }
@@ -151,7 +177,11 @@ exports.getMe = async (req, res, next) => {
           name: user.name,
           email: user.email,
           role: user.role,
-          dailyCalorieGoal: user.dailyCalorieGoal
+          dailyCalorieGoal: user.dailyCalorieGoal,
+          age: user.age,
+          gender: user.gender,
+          heightCm: user.heightCm,
+          weightKg: user.weightKg
         }
       }
     });
@@ -164,11 +194,15 @@ exports.getMe = async (req, res, next) => {
 // Waa halka ay user-ka u cusbooneysiiyaan macluumaadkooda
 exports.updateProfile = async (req, res, next) => {
   try {
-    const { name, dailyCalorieGoal } = req.body;
+    const { name, dailyCalorieGoal, age, gender, heightCm, weightKg } = req.body;
     
     const updateData = {};
     if (name) updateData.name = name;
     if (dailyCalorieGoal) updateData.dailyCalorieGoal = dailyCalorieGoal;
+    if (age != null) updateData.age = age;
+    if (gender) updateData.gender = gender;
+    if (heightCm != null) updateData.heightCm = heightCm;
+    if (weightKg != null) updateData.weightKg = weightKg;
 
     const user = await User.findByIdAndUpdate(
       req.user.id,
@@ -184,7 +218,11 @@ exports.updateProfile = async (req, res, next) => {
           name: user.name,
           email: user.email,
           role: user.role,
-          dailyCalorieGoal: user.dailyCalorieGoal
+          dailyCalorieGoal: user.dailyCalorieGoal,
+          age: user.age,
+          gender: user.gender,
+          heightCm: user.heightCm,
+          weightKg: user.weightKg
         }
       }
     });

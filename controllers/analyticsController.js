@@ -1,6 +1,36 @@
 const Meal = require('../models/Meal');
 const Habit = require('../models/Habit');
 const User = require('../models/User');
+const DailyInsight = require('../models/DailyInsight');
+
+const formatDate = (date) => date.toISOString().split('T')[0];
+
+const calculateBmr = (gender, weightKg, heightCm, age) => {
+  if (!gender || !weightKg || !heightCm || !age) return null;
+  // Mifflin-St Jeor (metric)
+  if (gender === 'male') {
+    return Math.round(10 * weightKg + 6.25 * heightCm - 5 * age + 5);
+  }
+  if (gender === 'female') {
+    return Math.round(10 * weightKg + 6.25 * heightCm - 5 * age - 161);
+  }
+  return null;
+};
+
+const computeStreak = (completedDates, startDate, maxDays = 60) => {
+  let streak = 0;
+  for (let i = 0; i < maxDays; i += 1) {
+    const d = new Date(startDate);
+    d.setDate(d.getDate() - i);
+    const key = formatDate(d);
+    if (completedDates.has(key)) {
+      streak += 1;
+    } else {
+      break;
+    }
+  }
+  return streak;
+};
 
 // Soo hel analytics-ka maalinta
 // Waa halka ay user-ka u helaan warbixinta maalinta
@@ -16,7 +46,7 @@ exports.getDailyAnalytics = async (req, res, next) => {
 
     // Soo hel user-ka si aad u hesho calorie goal-ka
     const user = await User.findById(req.user.id);
-    const dailyCalorieGoal = user.dailyCalorieGoal || 2000;
+    const dailyCalorieGoal = user.dailyCalorieGoal ?? 0;
 
     // Soo hel dhammaan cuntada maalinta
     const meals = await Meal.find({
@@ -34,9 +64,11 @@ exports.getDailyAnalytics = async (req, res, next) => {
 
     // Go'aami heerka calorie-ka
     let calorieStatus = 'on_track';
-    const percentage = (totalCalories / dailyCalorieGoal) * 100;
-    
-    if (percentage >= 100) {
+    const percentage =
+      dailyCalorieGoal > 0 ? (totalCalories / dailyCalorieGoal) * 100 : 0;
+    if (dailyCalorieGoal <= 0) {
+      calorieStatus = 'no_goal';
+    } else if (percentage >= 100) {
       calorieStatus = 'over_limit';
     } else if (percentage >= 80) {
       calorieStatus = 'near_limit';
@@ -63,6 +95,95 @@ exports.getDailyAnalytics = async (req, res, next) => {
     // Healthy day haddii breakfast iyo water goal la buuxiyo
     const healthyDay = healthyBreakfast && waterGoalMet;
 
+    // Streaks & consistency
+    const habitNames = [...new Set(habits.map((h) => h.name))];
+    const streaks = [];
+    for (const name of habitNames) {
+      const history = await Habit.find({
+        user: req.user.id,
+        name,
+        date: { $lte: endDate }
+      }).sort({ date: -1 }).limit(90);
+      const completedDates = new Set(
+        history.filter((h) => h.completed).map((h) => formatDate(new Date(h.date)))
+      );
+      streaks.push({
+        name,
+        streakDays: computeStreak(completedDates, targetDate),
+      });
+    }
+
+    let consistency = 'no_data';
+    if (totalHabits > 0) {
+      consistency = habitCompletionRate >= 70 ? 'consistent' : 'inconsistent';
+    }
+
+    // Calorie balance & weight tendency
+    const bmr = calculateBmr(user.gender, user.weightKg, user.heightCm, user.age);
+    const calorieBalance = bmr != null ? totalCalories - bmr : 0;
+
+    const weekStart = new Date(targetDate);
+    weekStart.setDate(weekStart.getDate() - 6);
+    weekStart.setHours(0, 0, 0, 0);
+    const weekMeals = await Meal.find({
+      user: req.user.id,
+      date: { $gte: weekStart, $lte: endDate }
+    });
+    const weeklyTotal = weekMeals.reduce((sum, meal) => sum + meal.calories, 0);
+    const weeklyAverage = Math.round(weeklyTotal / 7);
+    const weeklyBalance = bmr != null ? weeklyAverage - bmr : 0;
+
+    let weightTendency = 'unknown';
+    if (bmr != null) {
+      if (calorieBalance < -150 && weeklyBalance < -150) {
+        weightTendency = 'deficit';
+      } else if (calorieBalance > 150 && weeklyBalance > 150) {
+        weightTendency = 'surplus';
+      } else {
+        weightTendency = 'balanced';
+      }
+    }
+
+    const insights = [];
+    if (bmr == null) {
+      insights.push('Complete your profile (age, height, weight, gender) to get health insights.');
+    } else if (calorieBalance > 150) {
+      insights.push('Your calorie intake is higher than your daily need.');
+    } else if (calorieBalance < -150) {
+      insights.push('You are below your daily calorie need.');
+    } else {
+      insights.push('You are maintaining a healthy balance.');
+    }
+
+    if (consistency === 'inconsistent' && totalHabits > 0) {
+      insights.push('You may reduce your target to improve consistency.');
+    }
+    if (totalHabits === 0) {
+      insights.push('Log at least one habit today to start tracking.');
+    }
+    if (meals.length === 0) {
+      insights.push('Log your meals to track calories.');
+    }
+
+    await DailyInsight.findOneAndUpdate(
+      { user: req.user.id, date: formatDate(targetDate) },
+      {
+        user: req.user.id,
+        date: formatDate(targetDate),
+        bmr,
+        dailyCalories: totalCalories,
+        weeklyAverageCalories: weeklyAverage,
+        calorieBalance,
+        weightTendency,
+        consistency,
+        habitCompletionRate: Math.round(habitCompletionRate),
+        streaks,
+        insights,
+        computedAt: new Date()
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
     res.status(200).json({
       success: true,
       data: {
@@ -70,7 +191,10 @@ exports.getDailyAnalytics = async (req, res, next) => {
         calories: {
           total: totalCalories,
           goal: dailyCalorieGoal,
-          remaining: Math.max(0, dailyCalorieGoal - totalCalories),
+          remaining:
+            dailyCalorieGoal > 0
+              ? Math.max(0, dailyCalorieGoal - totalCalories)
+              : 0,
           percentage: Math.min(100, percentage),
           status: calorieStatus
         },
@@ -88,6 +212,15 @@ exports.getDailyAnalytics = async (req, res, next) => {
           completed: completedHabits,
           completionRate: Math.round(habitCompletionRate)
         },
+        models: {
+          bmr: bmr,
+          calorieBalance: calorieBalance,
+          weeklyAverageCalories: weeklyAverage,
+          weightTendency: weightTendency,
+          consistency: consistency,
+          streaks: streaks
+        },
+        insights: insights,
         healthy: {
           breakfast: healthyBreakfast,
           waterGoalMet: waterGoalMet,
@@ -114,7 +247,7 @@ exports.getWeeklyAnalytics = async (req, res, next) => {
     end.setHours(23, 59, 59, 999);
 
     const user = await User.findById(req.user.id);
-    const dailyCalorieGoal = user.dailyCalorieGoal || 2000;
+    const dailyCalorieGoal = user.dailyCalorieGoal ?? 0;
 
     // Soo hel dhammaan cuntada toddobaadka
     const meals = await Meal.find({
@@ -229,7 +362,7 @@ exports.getMonthlyAnalytics = async (req, res, next) => {
     endDate.setHours(23, 59, 59, 999);
 
     const user = await User.findById(req.user.id);
-    const dailyCalorieGoal = user.dailyCalorieGoal || 2000;
+    const dailyCalorieGoal = user.dailyCalorieGoal ?? 0;
 
     // Soo hel dhammaan cuntada bilaha
     const meals = await Meal.find({

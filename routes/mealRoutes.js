@@ -12,19 +12,19 @@ const { protect } = require('../middleware/authMiddleware');
 // Dhammaan routes-ka waa inay yihiin protected
 router.use(protect);
 
-// Get all meals
+// hel dhamaan meals
 router.get('/', getMeals);
 
-// Get single meal
+// hel meal gaar ah by ID
 router.get('/:id', getMeal);
 
-// Create meal
+// Abuur meal cusub
 router.post('/', createMeal);
 
-// Update meal
+// Cusboonaysii meal
 router.put('/:id', updateMeal);
 
-// Delete meal
+// Tirtir meal
 router.delete('/:id', deleteMeal);
 
 module.exports = router;

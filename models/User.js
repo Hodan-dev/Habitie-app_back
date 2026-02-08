@@ -36,7 +36,30 @@ const userSchema = new mongoose.Schema({
   },
   dailyCalorieGoal: {
     type: Number,
-    default: 2000
+    default: null
+  },
+  age: {
+    type: Number,
+    min: 5,
+    max: 120,
+    default: null
+  },
+  gender: {
+    type: String,
+    enum: ['male', 'female', 'other', 'prefer_not_say'],
+    default: null
+  },
+  heightCm: {
+    type: Number,
+    min: 50,
+    max: 260,
+    default: null
+  },
+  weightKg: {
+    type: Number,
+    min: 20,
+    max: 400,
+    default: null
   }
 }, {
   timestamps: true // Wuxuu sii daaya createdAt iyo updatedAt
