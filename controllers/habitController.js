@@ -1,4 +1,5 @@
 const Habit = require('../models/Habit');
+const { isHabitCompleted } = require('../services/models/healthModels');
 
 // Soo hel dhammaan habit-ka user-ka
 // Waa halka ay user-ka u helaan dhammaan habit-ka
@@ -35,7 +36,7 @@ exports.getHabits = async (req, res, next) => {
       let lastDate = null;
 
       for (const h of history) {
-        if (!h.completed) {
+        if (!isHabitCompleted(h)) {
           break;
         }
 

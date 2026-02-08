@@ -3,34 +3,15 @@ const Habit = require('../models/Habit');
 const User = require('../models/User');
 const DailyInsight = require('../models/DailyInsight');
 
-const formatDate = (date) => date.toISOString().split('T')[0];
-
-const calculateBmr = (gender, weightKg, heightCm, age) => {
-  if (!gender || !weightKg || !heightCm || !age) return null;
-  // Mifflin-St Jeor (metric)
-  if (gender === 'male') {
-    return Math.round(10 * weightKg + 6.25 * heightCm - 5 * age + 5);
-  }
-  if (gender === 'female') {
-    return Math.round(10 * weightKg + 6.25 * heightCm - 5 * age - 161);
-  }
-  return null;
-};
-
-const computeStreak = (completedDates, startDate, maxDays = 60) => {
-  let streak = 0;
-  for (let i = 0; i < maxDays; i += 1) {
-    const d = new Date(startDate);
-    d.setDate(d.getDate() - i);
-    const key = formatDate(d);
-    if (completedDates.has(key)) {
-      streak += 1;
-    } else {
-      break;
-    }
-  }
-  return streak;
-};
+const {
+  formatDate,
+  isHabitCompleted,
+  computeCompletionRate,
+  calculateBmr,
+  computeStreak,
+  computeSlope,
+  computeTendencyScore,
+} = require('../services/models/healthModels');
 
 // Soo hel analytics-ka maalinta
 // Waa halka ay user-ka u helaan warbixinta maalinta
@@ -88,9 +69,11 @@ exports.getDailyAnalytics = async (req, res, next) => {
       : false;
 
     // Xisaabi habit completion rate
-    const completedHabits = habits.filter(h => h.completed).length;
-    const totalHabits = habits.length;
-    const habitCompletionRate = totalHabits > 0 ? (completedHabits / totalHabits) * 100 : 0;
+    const {
+      total: totalHabits,
+      completed: completedHabits,
+      rate: habitCompletionRate
+    } = computeCompletionRate(habits);
 
     // Healthy day haddii breakfast iyo water goal la buuxiyo
     const healthyDay = healthyBreakfast && waterGoalMet;
@@ -105,7 +88,9 @@ exports.getDailyAnalytics = async (req, res, next) => {
         date: { $lte: endDate }
       }).sort({ date: -1 }).limit(90);
       const completedDates = new Set(
-        history.filter((h) => h.completed).map((h) => formatDate(new Date(h.date)))
+        history
+          .filter((h) => isHabitCompleted(h))
+          .map((h) => formatDate(new Date(h.date)))
       );
       streaks.push({
         name,
@@ -133,11 +118,35 @@ exports.getDailyAnalytics = async (req, res, next) => {
     const weeklyAverage = Math.round(weeklyTotal / 7);
     const weeklyBalance = bmr != null ? weeklyAverage - bmr : 0;
 
+    const weekDailyCalories = [];
+    for (let i = 0; i < 7; i += 1) {
+      const day = new Date(weekStart);
+      day.setDate(day.getDate() + i);
+      const dayStart = new Date(day);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(day);
+      dayEnd.setHours(23, 59, 59, 999);
+      const dayMeals = weekMeals.filter((m) => {
+        const mealDate = new Date(m.date);
+        return mealDate >= dayStart && mealDate <= dayEnd;
+      });
+      const dayCalories = dayMeals.reduce((sum, meal) => sum + meal.calories, 0);
+      weekDailyCalories.push(dayCalories);
+    }
+    const calorieTrendSlope = computeSlope(weekDailyCalories);
+
+    const tendencyScore = computeTendencyScore(
+      weeklyAverage,
+      dailyCalorieGoal,
+      habitCompletionRate,
+      user.gender
+    );
+
     let weightTendency = 'unknown';
     if (bmr != null) {
-      if (calorieBalance < -150 && weeklyBalance < -150) {
+      if (tendencyScore < -200) {
         weightTendency = 'deficit';
-      } else if (calorieBalance > 150 && weeklyBalance > 150) {
+      } else if (tendencyScore > 200) {
         weightTendency = 'surplus';
       } else {
         weightTendency = 'balanced';
@@ -174,6 +183,8 @@ exports.getDailyAnalytics = async (req, res, next) => {
         dailyCalories: totalCalories,
         weeklyAverageCalories: weeklyAverage,
         calorieBalance,
+        calorieTrendSlope,
+        tendencyScore,
         weightTendency,
         consistency,
         habitCompletionRate: Math.round(habitCompletionRate),
@@ -216,6 +227,8 @@ exports.getDailyAnalytics = async (req, res, next) => {
           bmr: bmr,
           calorieBalance: calorieBalance,
           weeklyAverageCalories: weeklyAverage,
+          calorieTrendSlope: Math.round(calorieTrendSlope * 100) / 100,
+          tendencyScore: tendencyScore,
           weightTendency: weightTendency,
           consistency: consistency,
           streaks: streaks
@@ -298,7 +311,7 @@ exports.getWeeklyAnalytics = async (req, res, next) => {
       if (dayHealthy) healthyDays += 1;
 
       const dayCalories = dayMeals.reduce((sum, meal) => sum + meal.calories, 0);
-      const completedHabits = dayHabits.filter(h => h.completed).length;
+      const completedHabits = dayHabits.filter((h) => isHabitCompleted(h)).length;
 
       dailyData.push({
         date: currentDate.toISOString().split('T')[0],
@@ -315,7 +328,7 @@ exports.getWeeklyAnalytics = async (req, res, next) => {
     // Xisaabi wadarta toddobaadka
     const totalCalories = meals.reduce((sum, meal) => sum + meal.calories, 0);
     const averageCalories = totalCalories / 7;
-    const totalCompletedHabits = habits.filter(h => h.completed).length;
+    const totalCompletedHabits = habits.filter((h) => isHabitCompleted(h)).length;
 
     const healthyCompletionRate = (healthyDays / 7) * 100;
     const daysRemaining =
@@ -381,9 +394,11 @@ exports.getMonthlyAnalytics = async (req, res, next) => {
     const daysInMonth = endDate.getDate();
     const averageCalories = totalCalories / daysInMonth;
     
-    const totalCompletedHabits = habits.filter(h => h.completed).length;
-    const totalHabits = habits.length;
-    const habitCompletionRate = totalHabits > 0 ? (totalCompletedHabits / totalHabits) * 100 : 0;
+    const {
+      total: totalHabits,
+      completed: totalCompletedHabits,
+      rate: habitCompletionRate
+    } = computeCompletionRate(habits);
 
     // Healthy days ee bilaha (breakfast <= 400 + water >= 8)
     let healthyDays = 0;

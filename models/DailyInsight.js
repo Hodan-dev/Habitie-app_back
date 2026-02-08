@@ -27,6 +27,14 @@ const dailyInsightSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+  calorieTrendSlope: {
+    type: Number,
+    default: 0,
+  },
+  tendencyScore: {
+    type: Number,
+    default: 0,
+  },
   weightTendency: {
     type: String,
     enum: ['deficit', 'balanced', 'surplus', 'unknown'],
